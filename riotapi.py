@@ -25,7 +25,7 @@
 import requests
 
 global apikey
-apikey = '6f39b4c8-f156-4327-88c1-6e5be33013d3' #a apikey é necessária pra fazer qualquer coisa
+apikey = 'c0568e16-1696-4656-bd3d-6d58cdd5ccc1' #a apikey é necessária pra fazer qualquer coisa
 
 #### FUNÇÕES DE PROCURA POR SUMMONER NAME/ID
 def searchbysumm(invocador,regiao): #procura o nome do invocador e o ID
@@ -91,6 +91,8 @@ def carregacmp(): #carrega os campeões para um dicionário mais organizado
 	return dic
 #PROCURA DE INFORMAÇÃO DE SOLOQ
 def getvarioselos(lstsumid,regiao= 'br'): #entrada: lista de summonersIDs, e a região a ser procurada, caso nada seja dado: padrão BR
+	if type(lstsumid)== int:
+		lstsumid = [lstsumid]
 	poss = ['BR','EUW','EUNE','NA','TR','OCE','CN','KR','LAN','RU','SEA','LAS']
 	if regiao.upper() not in poss:
 		return None
@@ -106,18 +108,24 @@ def getvarioselos(lstsumid,regiao= 'br'): #entrada: lista de summonersIDs, e a r
 		aux = _searchbyid(lstsumid,regiao)
 		#normalização movida para função externa
 		for i in aux:
-			dicsaida[str(i)]=['UNRANKED',0,0]
+			dicsaida[str(i)]=['UNRANKED',0,0,0,0,0]
 		return dicsaida
 	resposta = jsrequest.json()
 	for i in resposta:
 		if resposta[i][0]["queue"]== "RANKED_SOLO_5x5": #procura pelo registro de soloq
 			aux = resposta[i][0]['entries'][0]['playerOrTeamName']
 			#normalização movida para função externa
-			dicsaida[i] = [resposta[i][0]["tier"],resposta[i][0]['entries'][0]["division"],resposta[i][0]['entries'][0]["leaguePoints"]]
+			tier = resposta[i][0]["tier"]
+			divisao = resposta[i][0]['entries'][0]["division"]
+			LP = resposta[i][0]['entries'][0]["leaguePoints"]
+			wins = resposta[i][0]['entries'][0]["wins"]
+			losses = resposta[i][0]['entries'][0]["losses"]
+			winrate = round((100*wins)/(wins+losses),2)
+			dicsaida[i] = [tier,divisao,LP,wins,losses,winrate]
 	for i in lstsumid:#CASO NÃO TODOS SEJAM UNRAKED DEVE SE FAZER UM PARSE ADICIONAL
 		if str(i) not in dicsaida:
-			dicsaida[str(i)]=['UNRANKED',0,0]
-	return dicsaida
+			dicsaida[str(i)]=['UNRANKED',0,0,0,0,0]
+	return dicsaida #retorna um dicionario com chave summonerID e valores = TIER DIVISÃO PDL WINS LOSES E WINRATE(2 CASAS DECIMAIS)
 #####
 		
 	
@@ -185,9 +193,8 @@ def main(args):
 	a = input('Qual o nome de invocador deseja procurar? ')
 	b = input('Qual a região? ')
 	valor = searchbysumm(a,b)
-	print(partidaativa(valor[0],b))
-	return 0
-
+	c =getvarioselos(valor[0],b)
+	print(c)
 if __name__ == '__main__':
 	import sys
 	sys.exit(main(sys.argv))
