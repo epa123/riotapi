@@ -25,35 +25,72 @@
 import requests
 
 global apikey
-apikey = '01b0e541-ea0b-44a6-8207-97fcabcb6b0e'
-def searchbysumm(invocador,regiao):
+apikey = '6f39b4c8-f156-4327-88c1-6e5be33013d3' #a apikey é necessária pra fazer qualquer coisa
+
+#### FUNÇÕES DE PROCURA POR SUMMONER NAME/ID
+def searchbysumm(invocador,regiao): #procura o nome do invocador e o ID
 	invocador = invocador.replace(' ','')
 	poss = ['BR','EUW','EUNE','NA','TR','OCE','CN','KR','LAN','RU','SEA','LAS']
 	if regiao.upper() not in poss:
 		return None
-	url = 'https://br.api.pvp.net/api/lol/%s/v1.4/summoner/by-name/%s?api_key=%s' %(regiao.lower(),invocador.lower(),apikey)
+	url = 'https://%s.api.pvp.net/api/lol/%s/v1.4/summoner/by-name/%s?api_key=%s' %(regiao.lower(),regiao.lower(),invocador.lower(),apikey)
 	jsrequest = requests.get(url)
 	if jsrequest.status_code == 404:
 		return None
 	resposta = jsrequest.json()
 	return resposta[invocador.lower()]['id'], resposta[invocador.lower()]['name'] #retorna o id do invocador e o nome real
 	
-def getelo(sumid,regiao):
+def _searchbyid(lstsumid,regiao='br'): #busca o nome do invocador pelo ID 
+	if type(lstsumid)== int or type(lstsumid)== str:
+		lstsumid = [lstsumid]
 	poss = ['BR','EUW','EUNE','NA','TR','OCE','CN','KR','LAN','RU','SEA','LAS']
 	if regiao.upper() not in poss:
 		return None
-	url = 'https://%s.api.pvp.net/api/lol/%s/v2.5/league/by-summoner/%s/entry?api_key=%s'% (regiao.lower(),regiao.lower(), sumid, apikey)
+	strsum = ''
+	for i in lstsumid:
+		strsum+= str(i)+','
+	url = 'https://{}.api.pvp.net/api/lol/{}/v1.4/summoner/{}?api_key={}'.format(regiao.lower(),regiao.lower(),strsum,apikey)
 	jsrequest = requests.get(url)
-	if jsrequest.status_code in  [400,401,429,500,503]:
-		return 'API DA RIOT ESTÁ OFFLINE',0,0
-	resposta = jsrequest.json()
 	if jsrequest.status_code == 404:
-		return ('UNRANKED',0,0)
-	return (str(resposta[str(sumid)][0]['tier']), str(resposta[str(sumid)][0]['entries'][0]['division']), str(resposta[str(sumid)][0]['entries'][0]['leaguePoints'])) #alterado para retorno de dados puros
+		return None
+	dicsaida = {}
+	resposta = jsrequest.json()
+	for i in resposta:
+		dicsaida[i] = resposta[i]['name']
+	return dicsaida
+	#### FIM DAS FUNÇÕES DE PROCURA POR SUMMONER NAME/ID
 	
 	
-	
-def getvarioselos(lstsumid,regiao):
+#### FUNÇÕES DE DATABASE OU INTERNA
+def _updatecmp(): #carrega todos os campeões de uma vez pra acelerar o processo de partida ativa
+	champions = open('cmp.txt', 'w')
+	urlbase = 'https://global.api.pvp.net/api/lol/static-data/br/v1.2/champion?api_key={}'.format(apikey)
+	jsrequest = requests.get(urlbase)
+	resposta = jsrequest.json()
+	for i in resposta['data']:
+		champions.writelines(str(resposta['data'][i]['id'])+','+resposta['data'][i]['name']+'\n')
+	champions.close()
+	print('Atualização dos indices de campeão realizada com sucesso!') 
+	return
+
+def carregacmp(): #carrega os campeões para um dicionário mais organizado
+	champions = None
+	while champions is None:
+		try:
+			champions = open('cmp.txt', 'r')
+		except IOError:
+			print('Ops... Parece que a tabela de campeões não foi criada')
+			print('Tentando atualizar...')
+			_updatecmp()
+	linha = champions.readline().strip()
+	dic = {}
+	while linha!='':
+		aux = linha.split(',')
+		dic[aux[0]]=aux[1]
+		linha = champions.readline().strip()
+	return dic
+#PROCURA DE INFORMAÇÃO DE SOLOQ
+def getvarioselos(lstsumid,regiao= 'br'): #entrada: lista de summonersIDs, e a região a ser procurada, caso nada seja dado: padrão BR
 	poss = ['BR','EUW','EUNE','NA','TR','OCE','CN','KR','LAN','RU','SEA','LAS']
 	if regiao.upper() not in poss:
 		return None
@@ -63,103 +100,92 @@ def getvarioselos(lstsumid,regiao):
 	url = 'https://%s.api.pvp.net/api/lol/%s/v2.5/league/by-summoner/%s/entry?api_key=%s' %(regiao.lower(),regiao.lower(),strsum,apikey)
 	jsrequest = requests.get(url)
 	dicsaida = {}
-	if jsrequest.status_code in [400,401,429,500,503]: #erros de conexão, pesquisa e api
+	if jsrequest.status_code in [400,401,429,500,503]: #erros de conexão, dados errados e api
 		return None
 	if jsrequest.status_code == 404: #caso todos sejam unranked atribui ao dic unranked
-		for i in lstsumid:
-			dicsaida[str(i)]=['UNRANKED',0,0,searchbysumm(i,regiao)]
+		aux = _searchbyid(lstsumid,regiao)
+		#normalização movida para função externa
+		for i in aux:
+			dicsaida[str(i)]=['UNRANKED',0,0]
 		return dicsaida
 	resposta = jsrequest.json()
 	for i in resposta:
-		if resposta[i][0]["queue"]== "RANKED_SOLO_5x5":
-			dicsaida[i] = [resposta[i][0]["tier"],resposta[i][0]['entries'][0]["division"],resposta[i][0]['entries'][0]["leaguePoints"],resposta[i][0]['entries'][0]['playerOrTeamName']]
-	for i in lstsumid:
+		if resposta[i][0]["queue"]== "RANKED_SOLO_5x5": #procura pelo registro de soloq
+			aux = resposta[i][0]['entries'][0]['playerOrTeamName']
+			#normalização movida para função externa
+			dicsaida[i] = [resposta[i][0]["tier"],resposta[i][0]['entries'][0]["division"],resposta[i][0]['entries'][0]["leaguePoints"]]
+	for i in lstsumid:#CASO NÃO TODOS SEJAM UNRAKED DEVE SE FAZER UM PARSE ADICIONAL
 		if str(i) not in dicsaida:
-			dicsaida[str(lstsumid)]=['UNRANKED',0,0,resposta[i][0]['entries'][0]['playerOrTeamName']]
+			dicsaida[str(i)]=['UNRANKED',0,0]
 	return dicsaida
+#####
 		
 	
 	
 	
-	
-def partidaativa(sumid,regiao): #a api da riot precisa da região e do summoner ID, por isso não é possivel o usuário chamá-la manualmente
+#função de informação de partida ativa
+def partidaativa(sumid,regiao='br'): #a api da riot precisa da região e do summoner ID, por isso não é possivel o usuário chamá-la manualmente
+	#declarar os ids das filas, mapas e regiões
+	idfilas = {'4':'RANKED_SOLO_5x5', '14':'NORMAL_5x5_DRAFT', '0':'CUSTOM', '8':'NORMAL_3x3', '2':'NORMAL_5x5_BLIND',
+	 '41':'RANKED_TEAM_3x3', '42':'RANKED_TEAM_5x5', '65':'ARAM_5x5', '52':'BOT_TT_3x3', '31':'BOT_5x5_INTRO',
+	 '32':'BOT_5x5_BEGINNER', '33':'BOT_5x5_INTERMEDIATE', '61':'GROUP_FINDER_5x5'}
+	idmapas = { '1':"Summoner's Rift", '2':"Summoner's Rift", '3':'The Proving Grounds', '4':'Twisted Treeline', '8':'The Crystal Scar',
+	'10':'Twisted Treeline', '11':"Summoner's Rift", '12':'Howling Abyss', '14':"Butcher's Bridge"}
 	dicreg = {'br':'BR1', 'na':'NA1', 'lan':'LA1', 'las':'LA2', 'oce':'OC1', 'eune':'EUN1', 'tr':'TR1', 'ru':'RU', 'euw':'EUW1', 'kr':'KR'}
-	if regiao.lower() not in dicreg:
+	if regiao.lower() not in dicreg: #se a região não está no dicionário retornar None
 		return None
 	url = 'https://%s.api.pvp.net/observer-mode/rest/consumer/getSpectatorGameInfo/%s/%s?api_key=%s' %(regiao.lower(),dicreg[regiao.lower()],sumid,apikey) #formação da url
 	jsrequest = requests.get(url) #chamada da url
-	lstchampions = [] #declaração da lista de campeões que depois virará um dicionário
 	lstsumid = [] #lista de summoners id que retornará um dicionário com elos
-	
 	if jsrequest.status_code !=200: #tratamento de erro
 		return "O jogador não está em partida ativa ou a API da RIOT caiu"
 	resposta = jsrequest.json() #transforma a resposta na classe JSON
-	strretorno = 'INFORMAÇÕES DE PARTIDA\n'
-	strretorno += 'MAPA: %s\t TIPO DE JOGO: %s\n' %(resposta["gameMode"], resposta['gameType'])
+	iddomapa = str(resposta['mapId'])
+	iddafila = str(resposta['gameQueueConfigId'])
 	if resposta['bannedChampions']!=[]:
 			pass
-	strretorno += '\t\tPARTICIPANTES\n'
-	strtimevermelho = '\tTIME AZUL\n'
-	strroxo ='\tTIME VERMELHO\n'
 	#criação das listas de campeões e sumID
 	for i in resposta['participants']:
-		if i['championId'] not in lstchampions:
-			lstchampions.append(i['championId'])
 		if i not in lstsumid:
 			lstsumid.append(i['summonerId'])
-	dicsums = getvarioselos(lstsumid,regiao)
-	#dicchampions = _getchampionname(lstchampions,regiao)
-	#return 'aqui foi feito o dicionario de campeões'
-
-	#começa a formar a string inteira de cada time
-	for i in resposta['participants']:
+	dicsums = getvarioselos(lstsumid,regiao) #guarda as informações importantes do summoner no dicionário
+	dicchampions = carregacmp() #carregar o dicionário de campeões inteiro é mais rapido que procurar campeões um por um
+	#começa a formar a string inteira de cada
+	lstsaida = []
+	lstmapa = [idmapas.get(iddomapa,'Desconhecido'),idfilas.get(iddafila,'Desconhecido')]
+	lstsaida.append(lstmapa)
+	lstazul = []
+	lstvermelho = []
+	participantes = resposta['participants']
+	for i in participantes:
+		aux = []
 		if i['teamId']==100:
-			if dicsums[str(i['summonerId'])][0] == 'UNRANKED':
-				strtimevermelho+= '{}\t'.format(dicsums[str(i['summonerId'])][3])
-				strtimevermelho+= '{}\t'.format(dicsums[str(i['summonerId'])][0])
-				#strtimevermelho+= 'Campeão: {}\n'.format(dicchampions[i['championId']])
-			else:
-				strtimevermelho+= '{}s   '.format(dicsums[str(i['summonerId'])][3])
-				strtimevermelho+= '\t\t\t{}'.format(dicsums[str(i['summonerId'])][0])
-				strtimevermelho+= ' \t{}'.format(dicsums[str(i['summonerId'])][1])
-				strtimevermelho+= ' {} PDL\t'.format(dicsums[str(i['summonerId'])][2])
-				#strtimevermelho+= 'Campeão: {}\n'.format(dicchampions[i['championId']])
-		if i['teamId']==200:
-			if dicsums[str(i['summonerId'])][0] == 'UNRANKED':
-				strroxo+= '{}\t'.format(dicsums[str(i['summonerId'])][3])
-				strroxo+= 	'{}\t'.format(dicsums[str(i['summonerId'])][0])
-				#strroxo+= 'Campeão: {}\n'.format(dicchampions[i['championId']])
-			else:
-				strroxo+= '{}   '.format(dicsums[str(i['summonerId'])][3])
-				strroxo+= '\t\t\t{}'.format(dicsums[str(i['summonerId'])][0])
-				strroxo+= ' \t{}'.format(dicsums[str(i['summonerId'])][1])
-				strroxo+= ' {} PDL\t'.format(dicsums[str(i['summonerId'])][2])
-				#strroxo+= 'Campeão: {}\n'.format(dicchampions[i['championId']])
-	strretorno+= strtimevermelho+strroxo
-		
-		
-	return strretorno #pensando se retornarei uma string montada ou dados puros(matriz com nome de invocador, tier, divisão pdl e campeão)
+			aux = dicsums[str(i['summonerId'])]
+			aux.append(dicchampions[str(i['championId'])])
+			aux = [i['summonerName']] + aux 
+			lstazul.append(aux)
+		elif i['teamId']==200:
+			aux = dicsums[str(i['summonerId'])]
+			aux.append(dicchampions[str(i['championId'])])
+			aux = [i['summonerName']] + aux 
+			lstvermelho.append(aux)
+	lstsaida.append(lstazul)
+	lstsaida.append(lstvermelho)
+	return lstsaida #retorna uma matriz com todos os dados(que julguei úteis por hora).
 	
-
-def _getchampionname(cmpids,regiao): #só deve ser utilizada por outras funções, visto que ninguem terá o id do campeão manualmente
-	strcmpid = ''
-	dicsaida = {}
-	for i in cmpids:
-		url = 'https://global.api.pvp.net/api/lol/static-data/%s/v1.2/champion/%s?api_key=%s' % (regiao.lower(), str(i), apikey)
-		jsrequest = requests.get(url)
-		resposta = jsrequest.json()
-		if i not in dicsaida:
-			dicsaida[i]= resposta['name']
-	return dicsaida
 	
-
+def normaliza(strentr,plen): #recebe o summoner name e o retorna com 16 caracteres, preenchendo o que falta com espaços ao final.
+	strentr = str(strentr)
+	while len(strentr)!=plen:
+		strentr+= ' '
+	return strentr
+	
 
 def main(args):
-	while True:
-		a = input('Qual o nome do invocador a ser pesquisado? ')
-		b = input('Qual a região a ser pesquisada? ')
-		valor = searchbysumm(a,b)
-		print(partidaativa(valor[0],b))
+	a = input('Qual o nome de invocador deseja procurar? ')
+	b = input('Qual a região? ')
+	valor = searchbysumm(a,b)
+	print(partidaativa(valor[0],b))
 	return 0
 
 if __name__ == '__main__':
